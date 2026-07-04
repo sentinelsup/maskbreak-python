@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# NOTE: "sentinel-sdk" on PyPI is squatted by an unrelated third party
+# ("NAST0R"). Never publish or document that name — users following it
+# would install a stranger's code. "sentinelsup" matches the npm scope
+# (@sentinelsup/sdk).
+name = "sentinelsup"
+version = "0.1.0"
+description = "Sentinel — real-time fraud, VPN, proxy, and bot detection API. Free tier, sub-40ms response."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Sentinel Edge Networks LTD", email = "support@sntlhq.com" }
+]
+keywords = [
+    "fraud-detection", "vpn-detection", "proxy-detection", "bot-detection",
+    "antidetect-browser", "device-fingerprinting", "sentinel", "api"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://sntlhq.com"
+Documentation = "https://sntlhq.com/api"
+Repository = "https://github.com/sentinelsup/sentinel-python"
+Issues = "https://github.com/sentinelsup/sentinel-python/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sentinel"]
