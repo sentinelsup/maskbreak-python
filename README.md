@@ -16,7 +16,7 @@ env var, and a test:
 
 > Fetch https://sntlhq.com/integrate.md and follow it to add Sentinel fraud
 > protection to this app — protect signup, login, and checkout. My API key
-> is sk_live_YOUR_KEY; put it in a SENTINEL_API_KEY env var, never in
+> is sk_live_YOUR_KEY; put it in a SENTINEL_KEY env var, never in
 > client-side code. Then show me how to test it.
 
 [`integrate.md`](https://sntlhq.com/integrate.md) is the canonical
@@ -36,7 +36,7 @@ Python 3.8+. Get a free API key (no credit card) at [sntlhq.com/signup](https://
 import os
 from sentinel import Sentinel
 
-s = Sentinel(api_key=os.environ["SENTINEL_API_KEY"])  # or omit — reads the env var itself
+s = Sentinel(api_key=os.environ["SENTINEL_KEY"])  # or omit — reads the env var itself
 
 result = s.evaluate(token=request.json["sentinelToken"])  # token from the frontend SDK
 
@@ -47,6 +47,20 @@ print(result.decision)        # 'allow' | 'review' | 'block' — route on this
 print(result.risk_score)      # 0..100
 print(result.network)         # {'vpn': True, 'proxy': False, 'datacenter': True, ...}
 print(result.reasons)         # ['vpn_detected', 'datacenter_asn', ...]
+```
+
+Check the signup email against the disposable-domain feed (checked
+transiently, never stored), or look up an arbitrary IP with no browser
+token at all:
+
+```python
+result = s.evaluate(token=tok, email=data["email"])
+if result.raw.get("email", {}).get("disposable"):
+    ...  # burner domain — decision is escalated allow → review
+
+info = s.lookup("185.220.101.34")   # GET /v1/lookup/{ip} — same key & quota
+print(info["verdict"])              # 'allow' | 'review' | 'block'
+print(info["signals"])              # {'vpn': ..., 'proxied': ..., 'tor': ..., 'dch': ..., 'anon': ...}
 ```
 
 ## What you get back
@@ -63,6 +77,10 @@ class EvaluateResult:
     network: dict               # {vpn, proxy, datacenter, anonymous, tor, residential, service}
     device: dict                # antidetect / automation / emulator signals
     reasons: list[str]          # machine-readable codes
+    email: dict | None          # {disposable: bool} — present when you passed email=
+    decision_source: str | None # 'rules' | 'exception' when your policy matched
+    engine_decision: str | None # engine's own verdict when policy changed the decision
+    test: bool                  # True for test-token / test-key calls
     raw: dict                   # full upstream response
 
     is_suspicious: bool         # True if decision != 'allow'
@@ -79,19 +97,28 @@ Or use the [interactive playground](https://sntlhq.com/api#playground).
 
 ## Frontend setup
 
-Add the Sentinel Edge SDK to your frontend so Sentinel can collect the token:
+Add the Sentinel SDK to your frontend. One script loads **both** layers —
+network (VPN/proxy/datacenter) and device (antidetect/bot/tampering):
 
 ```html
-<script async src="https://sntlhq.com/assets/edge.js" id="_mcl"></script>
+<script async src="https://sntlhq.com/assets/sentinel.js"></script>
 
 <!-- Add class="monocle-enriched" to any form you want evaluated -->
 <form class="monocle-enriched" id="signup-form">
-  <!-- The SDK injects: <input type="hidden" name="monocle" value="eyJ..."> -->
+  <!-- The SDK injects both:
+       <input type="hidden" name="monocle"     value="eyJ...">  (network)
+       <input type="hidden" name="sentinel_fp" value="a1b2..."> (device) -->
 </form>
 ```
 
-Send the injected token to your backend with the form submission and pass it
-to `evaluate()`.
+Forward both fields to your backend with the form submission and pass them to
+`evaluate()` as `token` and `fingerprint_event_id` — without the second one,
+the device-layer signals (antidetect, automation, emulator) never fire. For
+fetch/XHR submissions, collect them explicitly:
+
+```js
+const { token, fingerprintEventId } = await window.Sentinel.collect();
+```
 
 ## Examples
 
@@ -102,7 +129,7 @@ from flask import Flask, request, abort, jsonify
 from sentinel import Sentinel, SentinelError
 
 app = Flask(__name__)
-sentinel = Sentinel()  # reads SENTINEL_API_KEY from env
+sentinel = Sentinel()  # reads SENTINEL_KEY (or SENTINEL_API_KEY) from env
 
 @app.route("/signup", methods=["POST"])
 def signup():
@@ -127,7 +154,7 @@ def signup():
 from django.http import JsonResponse
 from sentinel import Sentinel
 
-sentinel = Sentinel()  # reads SENTINEL_API_KEY from env
+sentinel = Sentinel()  # reads SENTINEL_KEY (or SENTINEL_API_KEY) from env
 
 class FraudCheckMiddleware:
     def __init__(self, get_response):
@@ -154,13 +181,39 @@ Runnable versions live in [`examples/`](./examples/).
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `api_key` | `$SENTINEL_API_KEY` | Your key starting with `sk_live_` |
+| `api_key` | `$SENTINEL_KEY` (falls back to `$SENTINEL_API_KEY`) | Your key starting with `sk_live_` |
 | `endpoint` | `https://sntlhq.com` | Override base URL (for testing) |
 | `timeout` | `5.0` | Per-request timeout in seconds |
 
-### `sentinel.evaluate(token, fingerprint_event_id=None)`
+### `sentinel.evaluate(token, fingerprint_event_id=None, account_id=None, email=None)`
 
 Returns `EvaluateResult`. Raises `SentinelError` on network/API failure.
+
+- `fingerprint_event_id` — adds the `device` signal block (antidetect, automation, emulator, …).
+- `account_id` — your own user id for this session; enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`).
+- `email` — adds `email.disposable` to the raw response; burner domains escalate `allow` to `review`.
+
+### `sentinel.lookup(ip)`
+
+Returns the raw response dict for any public IPv4/IPv6 address (wraps `GET /v1/lookup/{ip}`): `verdict` (`allow`/`review`/`block`), `risk_score` (0–100), `known`, `signals` (`{vpn, proxied, tor, dch, anon}` or `None`), `network` (`{asn, org, country, city}`), `latency_ms`. Shares the per-key hourly quota with `evaluate()`. `known: False` means our feeds hold no data — it is **not** a clean guarantee.
+
+## Testing
+
+Deterministic test tokens exercise your allow / review / block handling end-to-end — no browser needed. Test calls are authenticated and rate-limited like real ones but never billed, stored, or webhooked, and the response carries `test=True`:
+
+```python
+result = s.evaluate(token="test_vpn")       # also: test_clean, test_proxy, test_datacenter, test_tor
+assert result.decision == "review"
+assert result.test
+```
+
+No account yet? The public sandbox key accepts the same test tokens:
+
+```python
+s = Sentinel(api_key="sk_test_sandbox")     # CI/staging — nothing billed, nothing stored
+```
+
+Every account also has a personal `sk_test_...` key (Settings → API Key) that runs the *complete* live pipeline — real tokens, your rules and exception pins included — while events stay flagged as test and never count toward usage or webhooks.
 
 ## Errors
 

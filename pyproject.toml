@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 # would install a stranger's code. "sentinelsup" matches the npm scope
 # (@sentinelsup/sdk).
 name = "sentinelsup"
-version = "0.1.0"
+version = "0.2.2"
 description = "Sentinel — real-time fraud, VPN, proxy, and bot detection API. Free tier, sub-40ms response."
 readme = "README.md"
 requires-python = ">=3.8"
