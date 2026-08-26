@@ -1,6 +1,6 @@
 """
 Sentinel Python SDK — thin, dependency-free wrapper around the Sentinel
-fraud detection API at https://sntlhq.com/v1/evaluate.
+fraud detection API at https://maskbreak.com/v1/evaluate.
 
 Usage:
     from sentinel import Sentinel
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from urllib import error, parse, request
 
-DEFAULT_ENDPOINT = "https://sntlhq.com"
+DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
 __version__ = "0.2.1"
 
@@ -63,7 +63,7 @@ class EvaluateResult:
 
 
 class Sentinel:
-    """Sentinel API client. Pass an API key from https://sntlhq.com/dashboard."""
+    """Sentinel API client. Pass an API key from https://maskbreak.com/dashboard."""
 
     def __init__(
         self,
@@ -78,7 +78,7 @@ class Sentinel:
             raise SentinelError(
                 "Sentinel: api_key is required. "
                 "Pass it explicitly or set SENTINEL_KEY. "
-                "Get one free at https://sntlhq.com/signup"
+                "Get one free at https://maskbreak.com/signup"
             )
         self.api_key = api_key
         self.endpoint = endpoint.rstrip("/")

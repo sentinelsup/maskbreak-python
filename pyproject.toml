@@ -9,12 +9,12 @@ build-backend = "hatchling.build"
 # (@sentinelsup/sdk).
 name = "sentinelsup"
 version = "0.2.2"
-description = "Sentinel — real-time fraud, VPN, proxy, and bot detection API. Free tier, sub-40ms response."
+description = "Maskbreak — real-time fraud, VPN, proxy, and bot detection API. Free tier, sub-40ms response."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [
-    { name = "Sentinel Edge Networks LTD", email = "support@sntlhq.com" }
+    { name = "Sentinel Edge Networks LTD", email = "support@maskbreak.com" }
 ]
 keywords = [
     "fraud-detection", "vpn-detection", "proxy-detection", "bot-detection",
@@ -39,10 +39,10 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://sntlhq.com"
-Documentation = "https://sntlhq.com/api"
-Repository = "https://github.com/sentinelsup/sentinel-python"
-Issues = "https://github.com/sentinelsup/sentinel-python/issues"
+Homepage = "https://maskbreak.com"
+Documentation = "https://maskbreak.com/api"
+Repository = "https://github.com/sentinelsup/maskbreak-python"
+Issues = "https://github.com/sentinelsup/maskbreak-python/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["sentinel"]
