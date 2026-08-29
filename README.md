@@ -1,6 +1,6 @@
 # sentinelsup — Maskbreak Python SDK
 
-Official Python SDK for [Maskbreak](https://maskbreak.com) — a real-time fraud detection API that flags VPNs, residential proxies, antidetect browsers (Kameleo, GoLogin, Multilogin), Tor exit nodes, and AI bots in under 40 ms.
+Official Python SDK for [Maskbreak](https://maskbreak.com) — a real-time fraud detection API that flags VPNs, residential proxies, antidetect browsers (Kameleo, GoLogin, Multilogin), Tor exit nodes, and AI bots in under 150 ms.
 
 [![PyPI](https://img.shields.io/pypi/v/sentinelsup.svg)](https://pypi.org/project/sentinelsup/)
 [![Python versions](https://img.shields.io/pypi/pyversions/sentinelsup.svg)](https://pypi.org/project/sentinelsup/)
@@ -236,7 +236,7 @@ except SentinelError as e:
 ## Rate limits
 
 Free tier: **1,000 requests/hour** per API key. No monthly cap, no credit
-card. Upgrade at [maskbreak.com](https://maskbreak.com) when you need more.
+card.
 
 ## What Maskbreak detects
 
