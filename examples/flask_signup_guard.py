@@ -1,8 +1,8 @@
-"""Flask example — block VPN/proxy signups using Sentinel.
+"""Flask example — route signup risk; a VPN alone means review, not block.
 
 Run:
     pip install flask sentinelsup
-    export SENTINEL_API_KEY=sk_live_...
+    export SENTINEL_KEY=sk_live_...
     python flask_signup_guard.py
 """
 
@@ -12,7 +12,7 @@ from flask import Flask, abort, jsonify, request
 from sentinel import Sentinel, SentinelError
 
 app = Flask(__name__)
-sentinel = Sentinel()  # reads SENTINEL_API_KEY
+sentinel = Sentinel()  # reads SENTINEL_KEY, with SENTINEL_API_KEY fallback
 
 
 @app.route("/signup", methods=["POST"])
@@ -25,9 +25,11 @@ def signup() -> object:
         abort(400, "missing email or sentinelToken")
 
     try:
-        result = sentinel.evaluate(token=token)
+        result = sentinel.evaluate(token=token,
+                                   fingerprint_event_id=payload.get("fingerprintEventId"),
+                                   email=email)
     except SentinelError as e:
-        # Fail open if Sentinel is down — log and continue.
+        # Explicit fail-open demo policy; do not reuse for sensitive mutations.
         app.logger.warning("Sentinel unavailable: %s", e)
         result = None
 

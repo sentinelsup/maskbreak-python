@@ -21,6 +21,13 @@ DEFAULT_TIMEOUT = 5.0
 __version__ = "0.2.3"
 
 
+class _NoRedirect(request.HTTPRedirectHandler):
+    """Do not forward API credentials or replay calls at a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class SentinelError(Exception):
     """Raised on any Sentinel API or transport failure."""
 
@@ -103,9 +110,16 @@ class Sentinel:
         )
 
         try:
-            with request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
+            with request.build_opener(_NoRedirect()).open(req, timeout=self.timeout) as resp:
+                try:
+                    data = json.loads(resp.read().decode("utf-8"))
+                except (ValueError, UnicodeError):
+                    raise SentinelError("Sentinel: invalid JSON response", status=resp.status) from None
+                if not isinstance(data, dict):
+                    raise SentinelError("Sentinel: expected a JSON object", status=resp.status)
+                return data
+        except SentinelError:
+            raise
         except error.HTTPError as e:
             try:
                 err_body = json.loads(e.read().decode("utf-8"))
@@ -161,6 +175,8 @@ class Sentinel:
             payload["email"] = email
 
         data = self._request("/v1/evaluate", payload)
+        if data.get("decision") not in ("allow", "review", "block"):
+            raise SentinelError("Sentinel: invalid or missing evaluation decision", body=data)
 
         return EvaluateResult(
             decision=data.get("decision"),
@@ -198,7 +214,7 @@ class Sentinel:
         Raises:
             SentinelError: on network failure, timeout, or non-2xx response.
         """
-        if not ip or not isinstance(ip, str):
+        if not isinstance(ip, str) or not ip.strip():
             raise SentinelError(
                 "Sentinel.lookup: ip (public IPv4 or IPv6 address) is required"
             )

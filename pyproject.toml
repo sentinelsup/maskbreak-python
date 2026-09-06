@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 # (@sentinelsup/sdk).
 name = "sentinelsup"
 version = "0.2.3"
-description = "Maskbreak — real-time fraud, VPN, proxy, and bot detection API. Free tier, sub-40ms response."
+description = "Official Maskbreak SDK for browser-backed fraud checks and cloud/Tor IP lookups."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }

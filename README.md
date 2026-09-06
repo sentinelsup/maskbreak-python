@@ -1,6 +1,10 @@
 # sentinelsup — Maskbreak Python SDK
 
-Official Python SDK for [Maskbreak](https://maskbreak.com) — a real-time fraud detection API that flags VPNs, residential proxies, antidetect browsers (Kameleo, GoLogin, Multilogin), Tor exit nodes, and AI bots in under 150 ms.
+Official Python SDK for [Maskbreak](https://maskbreak.com). Evaluate SDK-backed
+visits for network and browser risk signals, or look up a public IP for cloud
+range and Tor signals. These are different evidence sources, not interchangeable
+checks. VPN/proxy service names are returned when known; a VPN alone routes to
+review under the default policy, not automatic blocking.
 
 [![PyPI](https://img.shields.io/pypi/v/sentinelsup.svg)](https://pypi.org/project/sentinelsup/)
 [![Python versions](https://img.shields.io/pypi/pyversions/sentinelsup.svg)](https://pypi.org/project/sentinelsup/)
@@ -8,16 +12,16 @@ Official Python SDK for [Maskbreak](https://maskbreak.com) — a real-time fraud
 
 Zero dependencies — just the standard library. Works with Flask, Django, FastAPI, or bare `urllib`.
 
-## Set up with AI (fastest)
+## Set up with an AI assistant
 
 Using Claude Code, Cursor, Copilot, or any AI coding assistant? Paste this one
 prompt and it wires the whole integration — frontend script, backend check,
 env var, and a test:
 
 > Fetch https://maskbreak.com/integrate.md and follow it to add Maskbreak fraud
-> protection to this app — protect signup, login, and checkout. My API key
-> is sk_live_YOUR_KEY; put it in a SENTINEL_KEY env var, never in
-> client-side code. Then show me how to test it.
+> protection to this app — protect signup, login, and checkout. Read the API key
+> from the server-only SENTINEL_KEY environment variable; I will configure the
+> secret separately. Never put it in client-side code. Show me how to test it.
 
 [`integrate.md`](https://maskbreak.com/integrate.md) is the canonical
 machine-readable integration guide, kept in sync with the live API.
@@ -38,7 +42,10 @@ from sentinel import Sentinel
 
 s = Sentinel(api_key=os.environ["SENTINEL_KEY"])  # or omit — reads the env var itself
 
-result = s.evaluate(token=request.json["sentinelToken"])  # token from the frontend SDK
+result = s.evaluate(
+    token=request.json["sentinelToken"],
+    fingerprint_event_id=request.json.get("fingerprintEventId"),
+)
 
 if result.is_blocked:            # decision == 'block'
     abort(403)
@@ -48,6 +55,11 @@ print(result.risk_score)      # 0..100
 print(result.network)         # {'vpn': True, 'proxy': False, 'datacenter': True, ...}
 print(result.reasons)         # ['vpn_detected', 'datacenter_asn', ...]
 ```
+
+This is a handler fragment, not a complete signup implementation. Route `review`
+to your verification/review flow; only `allow` is an approval. Keep API keys on
+the server. An unavailable device layer or `raw["degraded"]` is not proof of a
+clean visit; `degraded` describes the network layer only.
 
 Check the signup email against the disposable-domain feed (checked
 transiently, never stored), or look up an arbitrary IP with no browser
@@ -65,7 +77,8 @@ print(info["signals"])              # {'vpn': ..., 'proxied': ..., 'tor': ..., '
 
 ## What you get back
 
-`evaluate()` returns an `EvaluateResult` dataclass:
+`evaluate()` returns an `EvaluateResult` dataclass. The type sketch below uses
+Python 3.10+ annotation syntax for readability; the package minimum stays 3.8:
 
 ```python
 @dataclass
@@ -83,7 +96,7 @@ class EvaluateResult:
     test: bool                  # True for test-token / test-key calls
     raw: dict                   # full upstream response
 
-    is_suspicious: bool         # True if decision != 'allow'
+    is_suspicious: bool         # True for a non-null decision other than 'allow'
     is_blocked: bool            # True if decision == 'block'
 ```
 
@@ -113,7 +126,7 @@ network (VPN/proxy/datacenter) and device (antidetect/bot/tampering):
 
 Forward both fields to your backend with the form submission and pass them to
 `evaluate()` as `token` and `fingerprint_event_id` — without the second one,
-the device-layer signals (antidetect, automation, emulator) never fire. For
+the device-layer signals (antidetect, automation, emulator) are unavailable. For
 fetch/XHR submissions, collect them explicitly:
 
 ```js
@@ -122,7 +135,7 @@ const { token, fingerprintEventId } = await window.Sentinel.collect();
 
 ## Examples
 
-### Flask — block VPN/proxy signups
+### Flask — route signup decisions
 
 ```python
 from flask import Flask, request, abort, jsonify
@@ -135,7 +148,8 @@ sentinel = Sentinel()  # reads SENTINEL_KEY (or SENTINEL_API_KEY) from env
 def signup():
     data = request.get_json()
     try:
-        result = sentinel.evaluate(token=data["sentinelToken"])
+        result = sentinel.evaluate(token=data["sentinelToken"],
+                                   fingerprint_event_id=data.get("fingerprintEventId"))
     except SentinelError as e:
         # Fail open OR fail closed — your call. Logged either way.
         app.logger.warning("Sentinel error: %s", e)
@@ -144,6 +158,11 @@ def signup():
     if result and result.is_blocked:
         abort(403, "Signup blocked")
 
+    if result and result.decision == "review":
+        return jsonify({"needs_verification": True}), 202
+
+    # This example explicitly fails open on SDK errors. Choose an endpoint-
+    # specific fallback; do not reuse this policy for transfers or withdrawals.
     # ... your normal signup flow
     return jsonify({"ok": True})
 ```
@@ -152,7 +171,7 @@ def signup():
 
 ```python
 from django.http import JsonResponse
-from sentinel import Sentinel
+from sentinel import Sentinel, SentinelError
 
 sentinel = Sentinel()  # reads SENTINEL_KEY (or SENTINEL_API_KEY) from env
 
@@ -163,13 +182,17 @@ class FraudCheckMiddleware:
     def __call__(self, request):
         if request.path.startswith("/api/checkout"):
             token = request.META.get("HTTP_X_SENTINEL_TOKEN")
-            if token:
-                try:
-                    result = sentinel.evaluate(token=token)
-                    if result.is_blocked:
-                        return JsonResponse({"error": "blocked"}, status=403)
-                except Exception:
-                    pass  # fail open
+            if not token:
+                return JsonResponse({"error": "verification required"}, status=400)
+            try:
+                result = sentinel.evaluate(token=token,
+                    fingerprint_event_id=request.META.get("HTTP_X_SENTINEL_FINGERPRINT_EVENT_ID"))
+            except SentinelError:
+                return JsonResponse({"error": "verification unavailable"}, status=503)
+            if result.is_blocked:
+                return JsonResponse({"error": "blocked"}, status=403)
+            if result.decision == "review":
+                return JsonResponse({"error": "additional verification required"}, status=409)
         return self.get_response(request)
 ```
 
@@ -193,31 +216,66 @@ Returns `EvaluateResult`. Raises `SentinelError` on network/API failure.
 - `account_id` — your own user id for this session; enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`).
 - `email` — adds `email.disposable` to the raw response; burner domains escalate `allow` to `review`.
 
+This synchronous SDK forwards only these named inputs. It does not expose a
+timezone input, automatic retries, a circuit breaker, or every REST endpoint.
+Device availability and `degraded` remain accessible through `raw`; missing
+device evidence must not be treated as a clean device result. Account linking
+(`linked_accounts`) is customer-scoped; device `first_seen`/`times_seen` history
+is not customer-scoped.
+
 ### `sentinel.lookup(ip)`
 
 Returns the raw response dict for any public IPv4/IPv6 address (wraps `GET /v1/lookup/{ip}`): `verdict` (`allow`/`review`/`block`), `risk_score` (0–100), `known`, `signals` (`{vpn, proxied, tor, dch, anon}` or `None`), `network` (`{asn, org, country, city}`), `latency_ms`. Shares the per-key hourly quota with `evaluate()`. `known: False` means our feeds hold no data — it is **not** a clean guarantee.
 
+Production bare-IP lookup checks cloud ranges and Tor exits, not live-visit
+VPN/proxy evidence. Legacy `vpn`/`proxied` keys in the shape do not imply those
+checks ran. Use `evaluate()` with browser evidence for VPN/proxy checks. When
+obtaining an IP behind a proxy, trust forwarded headers only from configured
+trusted proxies; never blindly take the first client-supplied value.
+
 ## Testing
 
-Deterministic test tokens exercise your allow / review / block handling end-to-end — no browser needed. Test calls are authenticated and rate-limited like real ones but never billed, stored, or webhooked, and the response carries `test=True`:
+Deterministic `test_*` tokens exercise response handling, not detection quality.
+SDK fixture calls use authentication and quota but do not increment billable
+usage or trigger webhooks; console-originated live-key fixtures can be stored
+as test events. Personal rules and exception pins can change fixture decisions.
 
 ```python
 result = s.evaluate(token="test_vpn")       # also: test_clean, test_proxy, test_datacenter, test_tor
-assert result.decision == "review"
+assert result.decision == "review"          # default policy, no overriding rules/pins
 assert result.test
 ```
 
 No account yet? The public sandbox key accepts the same test tokens:
 
 ```python
-s = Sentinel(api_key="sk_test_sandbox")     # CI/staging — nothing billed, nothing stored
+s = Sentinel(api_key="sk_test_sandbox")     # deterministic fixtures only, no live detection
 ```
 
-Every account also has a personal `sk_test_...` key (Settings → API Key) that runs the *complete* live pipeline — real tokens, your rules and exception pins included — while events stay flagged as test and never count toward usage or webhooks.
+The public sandbox is separately rate-limited, accepts only supported fixture
+tokens, and does not store events or run live detection. It is not a production
+allowance. A personal `sk_test_...` key runs the live pipeline with real browser
+evidence and your policy; resulting events can be stored with `is_test` set,
+without incrementing usage or firing webhooks. Test keys still have rate limits.
+
+Local checks require no API credentials:
+
+```bash
+python -m unittest discover -s tests -v
+python -m pip install build twine
+python -m build
+python -m twine check dist/*
+```
+
+The CI matrix targets Python 3.8–3.14 without raising the 3.8 minimum. A configured
+matrix is not a claim that every interpreter was tested locally; inspect its run.
 
 ## Errors
 
-All failures raise `SentinelError`. The exception carries `.status` (HTTP code) and `.body` (parsed error body) when available.
+Transport/API failures and unusable success responses raise `SentinelError`.
+The exception carries `.status` (HTTP code) and `.body` (parsed error body) when
+available. Redirects are rejected to avoid forwarding credentials. Configure the
+final API base URL; the client does not retry automatically.
 
 ```python
 from sentinel import Sentinel, SentinelError
@@ -230,7 +288,7 @@ except SentinelError as e:
     elif e.status and 400 <= e.status < 500:
         pass    # bad input, won't recover by retrying
     else:
-        pass    # transient — retry once or fail open
+        pass    # unknown outcome — use the endpoint's explicit fallback policy
 ```
 
 ## Rate limits
