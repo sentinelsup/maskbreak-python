@@ -18,7 +18,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 
 
 class _NoRedirect(request.HTTPRedirectHandler):

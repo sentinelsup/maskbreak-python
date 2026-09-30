@@ -19,9 +19,10 @@ prompt and it wires the whole integration — frontend script, backend check,
 env var, and a test:
 
 > Fetch https://maskbreak.com/integrate.md and follow it to add Maskbreak fraud
-> protection to this app — protect signup, login, and checkout. Read the API key
-> from the server-only MASKBREAK_API_KEY environment variable; I will configure the
-> secret separately. Never put it in client-side code. Show me how to test it.
+> protection to this app — protect signup, login, and checkout. Start in watch
+> mode (MASKBREAK_MODE). Read the API key from the server-only MASKBREAK_API_KEY
+> environment variable; I will configure the secret separately. Never put it in
+> client-side code. Show me how to test it.
 
 [`integrate.md`](https://maskbreak.com/integrate.md) is the canonical
 machine-readable integration guide, kept in sync with the live API.
@@ -36,19 +37,33 @@ Python 3.8+. Get a free API key (no credit card) at [maskbreak.com/signup](https
 
 ## Quick start
 
+Add `<script async src="https://maskbreak.com/assets/sentinel.js"></script>` to
+the page with your form and `class="monocle-enriched"` to the form: it adds two
+hidden fields on submit, `monocle` and `sentinel_fp`. Your server forwards them:
+
 ```python
 import os
-from sentinel import Sentinel
+from sentinel import Sentinel, SentinelError
 
 s = Sentinel(api_key=os.environ["MASKBREAK_API_KEY"])  # or omit — reads the env var itself
 
-result = s.evaluate(
-    token=request.json["sentinelToken"],
-    fingerprint_event_id=request.json.get("fingerprintEventId"),
-)
+# Start in watch mode: log Maskbreak's answer and let everyone through.
+# When Events look right, set MASKBREAK_MODE=enforce and redeploy.
+MODE = os.environ.get("MASKBREAK_MODE") or "watch"
 
-if result.is_blocked:            # decision == 'block'
-    abort(403)
+result = None
+try:
+    result = s.evaluate(
+        token=request.form.get("monocle"),
+        fingerprint_event_id=request.form.get("sentinel_fp"),
+    )
+    print("[maskbreak]", MODE, result.decision, result.reasons)
+except SentinelError as e:
+    print("[maskbreak]", MODE, "check unavailable:", e)
+
+if MODE == "enforce" and (result is None or result.decision != "allow"):
+    abort(403 if result is not None and result.is_blocked else 409)
+# Watch mode, or an allow: continue with your existing handler.
 
 print(result.decision)        # 'allow' | 'review' | 'block' — route on this
 print(result.risk_score)      # 0..100
@@ -73,7 +88,7 @@ result = s.evaluate(token=tok, email=data["email"])
 if result.raw.get("email", {}).get("disposable"):
     ...  # burner domain — decision is escalated allow → review
 
-info = s.lookup("185.220.101.34")   # GET /v1/lookup/{ip} — same key & quota
+info = s.lookup("185.220.101.34")   # GET /v1/lookup/{ip} — same key and hourly limit; its own monthly allowance (10x your checks)
 print(info["verdict"])              # 'allow' | 'review' | 'block'
 print(info["signals"])              # {'vpn': ..., 'proxied': ..., 'tor': ..., 'dch': ..., 'anon': ...}
 ```
@@ -151,8 +166,8 @@ sentinel = Sentinel()  # reads MASKBREAK_API_KEY from env
 def signup():
     data = request.get_json()
     try:
-        result = sentinel.evaluate(token=data["sentinelToken"],
-                                   fingerprint_event_id=data.get("fingerprintEventId"))
+        result = sentinel.evaluate(token=data["monocle"],
+                                   fingerprint_event_id=data.get("sentinel_fp"))
     except SentinelError as e:
         # Fail open OR fail closed — your call. Logged either way.
         app.logger.warning("Sentinel error: %s", e)
@@ -258,8 +273,10 @@ s = Sentinel(api_key="sk_test_sandbox")     # deterministic fixtures only, no li
 The public sandbox is separately rate-limited, accepts only supported fixture
 tokens, and does not store events or run live detection. It is not a production
 allowance. A personal `sk_test_...` key runs the live pipeline with real browser
-evidence and your policy; resulting events can be stored with `is_test` set,
-without incrementing usage or firing webhooks. Test keys still have rate limits.
+evidence and your policy; resulting events are stored with `is_test` set, kept
+out of your stats and never fire webhooks, and their checks count toward the
+monthly allowance (the fixed `test_*` tokens do not). Test keys still have rate
+limits.
 
 Local checks require no API credentials:
 
