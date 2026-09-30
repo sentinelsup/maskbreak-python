@@ -4,7 +4,7 @@ fraud detection API at https://maskbreak.com/v1/evaluate.
 
 Usage:
     from sentinel import Sentinel
-    s = Sentinel()  # reads SENTINEL_KEY or SENTINEL_API_KEY from the env
+    s = Sentinel()  # reads MASKBREAK_API_KEY from the env
     result = s.evaluate(token=request.json["sentinelToken"])
     if result.is_blocked:
         abort(403)
@@ -18,7 +18,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.2.3"
+__version__ = "0.2.6"
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -78,13 +78,20 @@ class Sentinel:
         endpoint: str = DEFAULT_ENDPOINT,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
-        # SENTINEL_KEY is the name every doc surface uses; SENTINEL_API_KEY
-        # is kept for existing installs that already adopted it.
-        api_key = api_key or os.environ.get("SENTINEL_KEY") or os.environ.get("SENTINEL_API_KEY")
+        # MASKBREAK_API_KEY is the name every doc surface uses. SENTINEL_KEY
+        # and SENTINEL_API_KEY are older names, still read so existing installs
+        # keep working; the first non-empty one wins.
+        api_key = (
+            api_key
+            or os.environ.get("MASKBREAK_API_KEY")
+            or os.environ.get("SENTINEL_KEY")
+            or os.environ.get("SENTINEL_API_KEY")
+        )
         if not api_key or not isinstance(api_key, str):
             raise SentinelError(
                 "Sentinel: api_key is required. "
-                "Pass it explicitly or set SENTINEL_KEY. "
+                "Pass it explicitly or set MASKBREAK_API_KEY "
+                "(the older SENTINEL_KEY still works). "
                 "Get one free at https://maskbreak.com/signup"
             )
         self.api_key = api_key
@@ -148,7 +155,7 @@ class Sentinel:
 
         Args:
             token: Sentinel client-side token from the frontend SDK.
-            fingerprint_event_id: Optional Fingerprint event id for device signals.
+            fingerprint_event_id: Optional device event id for device signals.
             account_id: Optional account/user id — enables multi-accounting
                 detection (device.linked_accounts / device.multi_account).
             email: Optional signup email. Adds ``email.disposable`` to the raw

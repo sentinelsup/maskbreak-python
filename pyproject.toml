@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 # would install a stranger's code. "sentinelsup" matches the npm scope
 # (@sentinelsup/sdk).
 name = "sentinelsup"
-version = "0.2.3"
+version = "0.2.6"
 description = "Official Maskbreak SDK for browser-backed fraud checks and cloud/Tor IP lookups."
 readme = "README.md"
 requires-python = ">=3.8"

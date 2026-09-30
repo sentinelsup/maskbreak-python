@@ -20,7 +20,7 @@ env var, and a test:
 
 > Fetch https://maskbreak.com/integrate.md and follow it to add Maskbreak fraud
 > protection to this app — protect signup, login, and checkout. Read the API key
-> from the server-only SENTINEL_KEY environment variable; I will configure the
+> from the server-only MASKBREAK_API_KEY environment variable; I will configure the
 > secret separately. Never put it in client-side code. Show me how to test it.
 
 [`integrate.md`](https://maskbreak.com/integrate.md) is the canonical
@@ -40,7 +40,7 @@ Python 3.8+. Get a free API key (no credit card) at [maskbreak.com/signup](https
 import os
 from sentinel import Sentinel
 
-s = Sentinel(api_key=os.environ["SENTINEL_KEY"])  # or omit — reads the env var itself
+s = Sentinel(api_key=os.environ["MASKBREAK_API_KEY"])  # or omit — reads the env var itself
 
 result = s.evaluate(
     token=request.json["sentinelToken"],
@@ -60,6 +60,9 @@ This is a handler fragment, not a complete signup implementation. Route `review`
 to your verification/review flow; only `allow` is an approval. Keep API keys on
 the server. An unavailable device layer or `raw["degraded"]` is not proof of a
 clean visit; `degraded` describes the network layer only.
+
+Since v0.2.5, `Sentinel()` without a key reads `MASKBREAK_API_KEY`; the older
+`SENTINEL_KEY` and `SENTINEL_API_KEY` names are still read as fallbacks.
 
 Check the signup email against the disposable-domain feed (checked
 transiently, never stored), or look up an arbitrary IP with no browser
@@ -142,7 +145,7 @@ from flask import Flask, request, abort, jsonify
 from sentinel import Sentinel, SentinelError
 
 app = Flask(__name__)
-sentinel = Sentinel()  # reads SENTINEL_KEY (or SENTINEL_API_KEY) from env
+sentinel = Sentinel()  # reads MASKBREAK_API_KEY from env
 
 @app.route("/signup", methods=["POST"])
 def signup():
@@ -173,7 +176,7 @@ def signup():
 from django.http import JsonResponse
 from sentinel import Sentinel, SentinelError
 
-sentinel = Sentinel()  # reads SENTINEL_KEY (or SENTINEL_API_KEY) from env
+sentinel = Sentinel()  # reads MASKBREAK_API_KEY from env
 
 class FraudCheckMiddleware:
     def __init__(self, get_response):
@@ -204,7 +207,7 @@ Runnable versions live in [`examples/`](./examples/).
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `api_key` | `$SENTINEL_KEY` (falls back to `$SENTINEL_API_KEY`) | Your key starting with `sk_live_` |
+| `api_key` | `$MASKBREAK_API_KEY` (falls back to `$SENTINEL_KEY`, then `$SENTINEL_API_KEY`) | Your key starting with `sk_live_` |
 | `endpoint` | `https://maskbreak.com` | Override base URL (for testing) |
 | `timeout` | `5.0` | Per-request timeout in seconds |
 
@@ -291,10 +294,15 @@ except SentinelError as e:
         pass    # unknown outcome — use the endpoint's explicit fallback policy
 ```
 
+A `503` whose body has `"code": "storage_unavailable"` means the key could not
+be checked at that moment. It is not an invalid key (that is `401`): retry
+after a short delay (the API sends `Retry-After: 30`; `SentinelError` exposes
+status and body, not headers, so use raw HTTP if you need to read it) and apply
+your outage policy meanwhile.
+
 ## Rate limits
 
-Free tier: **1,000 requests/hour** per API key. No monthly cap, no credit
-card.
+Visitor checks (`evaluate()`) are counted per calendar month in UTC, with an hourly cap: **Free — 10,000 a month, up to 1,000 an hour, no credit card**; paid plans from €29 a month ([pricing](https://maskbreak.com/pricing)). IP lookups (`lookup()`) have their own monthly allowance, 10× the plan's checks (100,000 on Free). A used-up month answers `429` with `code: "monthly_quota_exceeded"` and `Retry-After` until the 1st; there are no overage charges.
 
 ## What Maskbreak detects
 

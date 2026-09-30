@@ -24,7 +24,7 @@ _GUARDED_PATHS = ("/api/checkout", "/api/withdraw", "/api/transfer")
 class SentinelMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-        self.sentinel = Sentinel()  # reads SENTINEL_KEY, with legacy fallback
+        self.sentinel = Sentinel()  # reads MASKBREAK_API_KEY, older names as fallback
 
     def __call__(self, request):
         if not request.path.startswith(_GUARDED_PATHS):

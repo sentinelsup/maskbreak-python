@@ -2,7 +2,7 @@
 
 Run:
     pip install flask sentinelsup
-    export SENTINEL_KEY=sk_live_...
+    export MASKBREAK_API_KEY=sk_live_...
     python flask_signup_guard.py
 """
 
@@ -12,7 +12,7 @@ from flask import Flask, abort, jsonify, request
 from sentinel import Sentinel, SentinelError
 
 app = Flask(__name__)
-sentinel = Sentinel()  # reads SENTINEL_KEY, with SENTINEL_API_KEY fallback
+sentinel = Sentinel()  # reads MASKBREAK_API_KEY (older SENTINEL_KEY still works)
 
 
 @app.route("/signup", methods=["POST"])

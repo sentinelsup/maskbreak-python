@@ -108,11 +108,28 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(len(self.server.calls), 1, "redirect target must not receive the API key")
 
     def test_environment_key_precedence(self):
-        with patch.dict(os.environ, {"SENTINEL_KEY": "primary", "SENTINEL_API_KEY": "legacy"}):
-            self.assertEqual(Sentinel().api_key, "primary")
+        env = {"MASKBREAK_API_KEY": "current", "SENTINEL_KEY": "primary", "SENTINEL_API_KEY": "legacy"}
+        with patch.dict(os.environ, env):
+            self.assertEqual(Sentinel().api_key, "current")
             self.assertEqual(Sentinel("explicit").api_key, "explicit")
+            os.environ.pop("MASKBREAK_API_KEY")
+            self.assertEqual(Sentinel().api_key, "primary")
             os.environ.pop("SENTINEL_KEY")
             self.assertEqual(Sentinel().api_key, "legacy")
+
+    def test_environment_key_new_name_alone(self):
+        with patch.dict(os.environ, {"MASKBREAK_API_KEY": "current"}):
+            for old in ("SENTINEL_KEY", "SENTINEL_API_KEY"):
+                os.environ.pop(old, None)
+            self.assertEqual(Sentinel().api_key, "current")
+
+    def test_missing_key_names_the_current_variable(self):
+        with patch.dict(os.environ, {}):
+            for name in ("MASKBREAK_API_KEY", "SENTINEL_KEY", "SENTINEL_API_KEY"):
+                os.environ.pop(name, None)
+            with self.assertRaises(SentinelError) as caught:
+                Sentinel()
+            self.assertIn("MASKBREAK_API_KEY", str(caught.exception))
 
     def test_result_helpers_keep_review_distinct_from_block(self):
         for decision in ("allow", "review", "block"):
@@ -132,7 +149,7 @@ class DjangoGuardTests(unittest.TestCase):
         ]:
             with self.subTest(decision=decision, flag=flag):
                 view = Mock(return_value=SimpleNamespace(status_code=200))
-                with patch.dict(os.environ, {"SENTINEL_KEY": "sk_test_fixture"}):
+                with patch.dict(os.environ, {"MASKBREAK_API_KEY": "sk_test_fixture"}):
                     middleware = example["SentinelMiddleware"](view)
                 middleware.sentinel = Mock()
                 middleware.sentinel.evaluate.return_value = EvaluateResult(
