@@ -19,11 +19,13 @@ sentinel = Sentinel()  # reads MASKBREAK_API_KEY (older SENTINEL_KEY still works
 def signup() -> object:
     payload = request.get_json(force=True) or {}
     email = (payload.get("email") or "").strip().lower()
-    token = payload.get("sentinelToken")
+    # What Sentinel.collect() returns ("token"), or the field the script fills in a form ("monocle").
+    token = payload.get("token") or payload.get("monocle")
 
-    if not email or not token:
-        abort(400, "missing email or sentinelToken")
+    if not email:
+        abort(400, "missing email")
 
+    # No token (a blocked collector) raises SentinelError too: it lands in the fallback below.
     try:
         result = sentinel.evaluate(token=token,
                                    fingerprint_event_id=payload.get("fingerprintEventId"),

@@ -3,10 +3,13 @@ Sentinel Python SDK — thin, dependency-free wrapper around the Sentinel
 fraud detection API at https://maskbreak.com/v1/evaluate.
 
 Usage:
-    from sentinel import Sentinel
+    from sentinel import Sentinel, SentinelError
     s = Sentinel()  # reads MASKBREAK_API_KEY from the env
-    result = s.evaluate(token=request.json["sentinelToken"])
-    if result.is_blocked:
+    try:
+        result = s.evaluate(token=request.form.get("monocle"))
+    except SentinelError:
+        result = None  # no token, or the call failed: apply your fallback
+    if result is not None and result.is_blocked:
         abort(403)
 """
 
@@ -18,7 +21,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -166,7 +169,8 @@ class Sentinel:
             EvaluateResult with decision, risk_score, network, device, and reasons.
 
         Raises:
-            SentinelError: on network failure, timeout, or non-2xx response.
+            SentinelError: on a missing or empty token, network failure, timeout, a
+                non-2xx response, or a response without a valid decision.
         """
         if not token or not isinstance(token, str):
             raise SentinelError(
@@ -204,8 +208,9 @@ class Sentinel:
         """Look up an arbitrary public IP address — no browser token needed.
 
         Wraps ``GET /v1/lookup/{ip}``. Useful for batch scoring, log
-        enrichment, and server-side screening. Shares the per-key hourly
-        quota with :meth:`evaluate`.
+        enrichment, and server-side screening. Shares the hourly quota
+        with :meth:`evaluate` (one per account for the live keys; the test key
+        has its own) and has its own monthly allowance.
 
         Args:
             ip: Public IPv4 or IPv6 address, e.g. ``"185.220.101.34"``.

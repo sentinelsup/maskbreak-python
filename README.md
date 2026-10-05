@@ -65,10 +65,11 @@ if MODE == "enforce" and (result is None or result.decision != "allow"):
     abort(403 if result is not None and result.is_blocked else 409)
 # Watch mode, or an allow: continue with your existing handler.
 
-print(result.decision)        # 'allow' | 'review' | 'block' — route on this
-print(result.risk_score)      # 0..100
-print(result.network)         # {'vpn': True, 'proxy': False, 'datacenter': True, ...}
-print(result.reasons)         # ['vpn_detected', 'datacenter_asn', ...]
+if result is not None:            # None: no token, or the call failed
+    print(result.decision)        # 'allow' | 'review' | 'block' — route on this
+    print(result.risk_score)      # 0..100
+    print(result.network)         # {'vpn': True, 'proxy': False, 'datacenter': True, ...}
+    print(result.reasons)         # ['vpn_detected', 'datacenter_asn', ...]
 ```
 
 This is a handler fragment, not a complete signup implementation. Route `review`
@@ -164,9 +165,9 @@ sentinel = Sentinel()  # reads MASKBREAK_API_KEY from env
 
 @app.route("/signup", methods=["POST"])
 def signup():
-    data = request.get_json()
+    data = request.get_json(silent=True) or request.form
     try:
-        result = sentinel.evaluate(token=data["monocle"],
+        result = sentinel.evaluate(token=data.get("monocle"),
                                    fingerprint_event_id=data.get("sentinel_fp"))
     except SentinelError as e:
         # Fail open OR fail closed — your call. Logged either way.
@@ -228,7 +229,7 @@ Runnable versions live in [`examples/`](./examples/).
 
 ### `sentinel.evaluate(token, fingerprint_event_id=None, account_id=None, email=None)`
 
-Returns `EvaluateResult`. Raises `SentinelError` on network/API failure.
+Returns `EvaluateResult`. Raises `SentinelError` when `token` is missing or empty, and on network/API failure.
 
 - `fingerprint_event_id` — adds the `device` signal block (antidetect, automation, emulator, …).
 - `account_id` — your own user id for this session; enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`).
@@ -243,7 +244,7 @@ is not customer-scoped.
 
 ### `sentinel.lookup(ip)`
 
-Returns the raw response dict for any public IPv4/IPv6 address (wraps `GET /v1/lookup/{ip}`): `verdict` (`allow`/`review`/`block`), `risk_score` (0–100), `known`, `signals` (`{vpn, proxied, tor, dch, anon}` or `None`), `network` (`{asn, org, country, city}`), `latency_ms`. Shares the per-key hourly quota with `evaluate()`. `known: False` means our feeds hold no data — it is **not** a clean guarantee.
+Returns the raw response dict for any public IPv4/IPv6 address (wraps `GET /v1/lookup/{ip}`): `verdict` (`allow`/`review`/`block`), `risk_score` (0–100), `known`, `signals` (`{vpn, proxied, tor, dch, anon}` or `None`), `network` (`{asn, org, country, city}`), `latency_ms`. Shares the hourly quota with `evaluate()` (one per account for the live keys; the test key has its own) and has its own monthly allowance. `known: False` means our feeds hold no data — it is **not** a clean guarantee.
 
 Production bare-IP lookup checks cloud ranges and Tor exits, not live-visit
 VPN/proxy evidence. Legacy `vpn`/`proxied` keys in the shape do not imply those
@@ -292,7 +293,7 @@ matrix is not a claim that every interpreter was tested locally; inspect its run
 
 ## Errors
 
-Transport/API failures and unusable success responses raise `SentinelError`.
+A missing or empty `token`, transport/API failures and unusable success responses raise `SentinelError`.
 The exception carries `.status` (HTTP code) and `.body` (parsed error body) when
 available. Redirects are rejected to avoid forwarding credentials. Configure the
 final API base URL; the client does not retry automatically.
@@ -323,11 +324,7 @@ Visitor checks (`evaluate()`) are counted per calendar month in UTC, with an hou
 
 ## What Maskbreak detects
 
-VPNs (commercial + self-hosted) · residential proxies (Bright Data, IPRoyal,
-and similar networks) · datacenter IPs · Tor exit nodes · antidetect browsers
-(Kameleo, GoLogin, Multilogin, Dolphin{anty}, AdsPower) · headless browsers
-and automation (Puppeteer, Playwright, Selenium) · AI agents · emulators and
-virtual machines · browser tampering.
+SDK-backed visits can supply VPN/proxy, cloud-hosting and Tor signals, with VPN/proxy service names when known. Available device intelligence adds browser tampering, automation, emulator and virtual-machine signals. Coverage depends on the evidence available; these are not guarantees of detecting every product or visitor. Bare-IP lookup is limited to public cloud-range and Tor evidence.
 
 ## Related
 
