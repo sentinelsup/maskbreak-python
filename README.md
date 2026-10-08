@@ -37,45 +37,108 @@ Python 3.8+. Get a free API key (no credit card) at [maskbreak.com/signup](https
 
 ## Quick start
 
-Add `<script async src="https://maskbreak.com/assets/sentinel.js"></script>` to
-the page with your form and `class="monocle-enriched"` to the form: it adds two
-hidden fields on submit, `monocle` and `sentinel_fp`. Your server forwards them:
+Three steps give you the first complete check, one that carries both the
+network token and the browser check. The Maskbreak dashboard's setup uses the
+same names.
+
+**1. Add the script to the page with your form**, and `class="monocle-enriched"`
+to the `<form>` element itself (never to an input):
+
+```html
+<script async src="https://maskbreak.com/assets/sentinel.js"></script>
+
+<form class="monocle-enriched" method="post" action="/signup">
+  <!-- your fields; the script adds monocle, sentinel_fp and sentinel_tz -->
+</form>
+```
+
+Your site sends a Content-Security-Policy header? A policy that does not list
+Maskbreak's hosts blocks the script: helmet's default policy in Express does,
+and so does any `default-src 'self'` policy. Add
+[the list](https://maskbreak.com/integrate.md#content-security-policy) to it.
+The hidden fields fill in a second or two after the page loads.
+
+**2. Send the check from your server.** One field mapping, whichever way the
+browser part sends it:
+
+| Form field | `Sentinel.collect()` returns | Send to the API as |
+|---|---|---|
+| `monocle` (network token) | `token` | `token` |
+| `sentinel_fp` (browser check) | `fingerprintEventId` | `fingerprintEventId` (`fingerprint_event_id=` in `evaluate()`) |
+| `sentinel_tz` (time zone) | `tz` | `tz` (optional; plain HTTP only, see below) |
+
+Start in watch mode: every submission is checked and logged, a submission with
+a missing field included (the dashboard then says which half did not arrive),
+and nobody is blocked. `evaluate()` will not send a request without the network
+token, so the quick start reports those submissions over plain HTTP:
 
 ```python
+import json
 import os
-from sentinel import Sentinel, SentinelError
+import urllib.request
 
-s = Sentinel(api_key=os.environ["MASKBREAK_API_KEY"])  # or omit — reads the env var itself
+from flask import Flask, abort, request
+from sentinel import Sentinel
+
+app = Flask(__name__)
+sentinel = Sentinel()  # reads MASKBREAK_API_KEY from the environment
 
 # Start in watch mode: log Maskbreak's answer and let everyone through.
 # When Events look right, set MASKBREAK_MODE=enforce and redeploy.
 MODE = os.environ.get("MASKBREAK_MODE") or "watch"
 
-result = None
-try:
-    result = s.evaluate(
-        token=request.form.get("monocle"),
-        fingerprint_event_id=request.form.get("sentinel_fp"),
+
+def report_without_token(fields):
+    """evaluate() refuses to send without the network token. In watch mode a
+    submission without it is reported anyway, so the dashboard can say so."""
+    req = urllib.request.Request(
+        "https://maskbreak.com/v1/evaluate",
+        data=json.dumps({k: v for k, v in fields.items() if v}).encode(),
+        headers={"Authorization": "Bearer " + os.environ["MASKBREAK_API_KEY"],
+                 "Content-Type": "application/json"},
+        method="POST",
     )
-    print("[maskbreak]", MODE, result.decision, result.reasons)
-except SentinelError as e:
-    print("[maskbreak]", MODE, "check unavailable:", e)
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.load(response)
 
-if MODE == "enforce" and (result is None or result.decision != "allow"):
-    abort(403 if result is not None and result.is_blocked else 409)
-# Watch mode, or an allow: continue with your existing handler.
 
-if result is not None:            # None: no token, or the call failed
-    print(result.decision)        # 'allow' | 'review' | 'block' — route on this
-    print(result.risk_score)      # 0..100
-    print(result.network)         # {'vpn': True, 'proxy': False, 'datacenter': True, ...}
-    print(result.reasons)         # ['vpn_detected', 'datacenter_asn', ...]
+def maskbreak_check(data):
+    """Return (decision, reasons); decision is None when there is no answer."""
+    # Form fields -> API names. Sentinel.collect() already uses the API names.
+    token = data.get("token") or data.get("monocle")
+    event_id = data.get("fingerprintEventId") or data.get("sentinel_fp")
+    tz = data.get("tz") or data.get("sentinel_tz")
+    try:
+        if token:
+            result = sentinel.evaluate(token=token, fingerprint_event_id=event_id)
+            return result.decision, result.reasons
+        if MODE != "enforce":
+            raw = report_without_token({"fingerprintEventId": event_id, "tz": tz})
+            return raw.get("decision"), raw.get("reasons")
+        return None, "no network token"
+    except Exception as e:  # SentinelError, or the plain HTTP call failing
+        return None, str(e)
+
+
+@app.route("/signup", methods=["POST"])
+def signup():
+    data = request.get_json(silent=True) or request.form
+    decision, reasons = maskbreak_check(data)
+    print("[maskbreak]", MODE, decision or "no answer", reasons)
+    if MODE == "enforce" and decision != "allow":
+        abort(403 if decision == "block" else 409)
+    ...  # watch mode, or an allow: your existing signup flow runs
 ```
+
+**3. Submit your form once.** Deploy, open the page and submit the form. The
+first check then appears in the dashboard (Integration tab and Events).
 
 This is a handler fragment, not a complete signup implementation. Route `review`
 to your verification/review flow; only `allow` is an approval. Keep API keys on
 the server. An unavailable device layer or `raw["degraded"]` is not proof of a
-clean visit; `degraded` describes the network layer only.
+clean visit; `degraded` describes the network layer only. The full enforce
+policy (review, missing evidence, test and degraded answers) is in
+[integrate.md](https://maskbreak.com/integrate.md).
 
 Since v0.2.5, `Sentinel()` without a key reads `MASKBREAK_API_KEY`; the older
 `SENTINEL_KEY` and `SENTINEL_API_KEY` names are still read as fallbacks.
@@ -85,14 +148,17 @@ transiently, never stored), or look up an arbitrary IP with no browser
 token at all:
 
 ```python
-result = s.evaluate(token=tok, email=data["email"])
+result = sentinel.evaluate(token=tok, email=data["email"])
 if result.raw.get("email", {}).get("disposable"):
     ...  # burner domain — decision is escalated allow → review
 
-info = s.lookup("185.220.101.34")   # GET /v1/lookup/{ip} — same key and hourly limit; its own monthly allowance (10x your checks)
-print(info["verdict"])              # 'allow' | 'review' | 'block'
-print(info["signals"])              # {'vpn': ..., 'proxied': ..., 'tor': ..., 'dch': ..., 'anon': ...}
+info = sentinel.lookup("185.220.101.34")  # GET /v1/lookup/{ip} — same key and hourly limit; its own monthly allowance (10x your checks)
+print(info["verdict"])                   # 'allow' | 'review' | 'block'
+print(info["signals"])                   # {'vpn': ..., 'proxied': ..., 'tor': ..., 'dch': ..., 'anon': ...}
 ```
+
+An address lookup checks Tor exits and cloud servers only. It is not a visitor
+check and does not stand in for the three steps above.
 
 ## What you get back
 
@@ -129,93 +195,80 @@ Or use the [interactive playground](https://maskbreak.com/api#playground).
 
 ## Frontend setup
 
-Add the Maskbreak SDK to your frontend. One script loads **both** layers —
-network (VPN/proxy/datacenter) and device (antidetect/bot/tampering):
+Add the Maskbreak SDK to the page with your form. One script loads **both**
+layers — network (VPN/proxy/datacenter) and device (antidetect/bot/tampering):
 
 ```html
 <script async src="https://maskbreak.com/assets/sentinel.js"></script>
 
-<!-- Add class="monocle-enriched" to any form you want evaluated -->
+<!-- class="monocle-enriched" on the form itself, never on an input -->
 <form class="monocle-enriched" id="signup-form">
-  <!-- The SDK injects both:
+  <!-- The SDK fills in:
        <input type="hidden" name="monocle"     value="eyJ...">  (network)
-       <input type="hidden" name="sentinel_fp" value="a1b2..."> (device) -->
+       <input type="hidden" name="sentinel_fp" value="a1b2..."> (device)
+       <input type="hidden" name="sentinel_tz" value="Europe/Tallinn"> -->
 </form>
 ```
 
-Forward both fields to your backend with the form submission and pass them to
-`evaluate()` as `token` and `fingerprint_event_id` — without the second one,
-the device-layer signals (antidetect, automation, emulator) are unavailable. For
-fetch/XHR submissions, collect them explicitly:
+An ordinary form post carries the three fields to your server, and the quick
+start maps them to the API's names. A form your JavaScript submits (fetch,
+React, Next.js, Vue) sends `Sentinel.collect()`'s result with its own data
+instead; the quick start's handler reads that JSON too. `collect()` waits at
+most 5 seconds for the device check (`collect({ timeout: ms })` to change it);
+a value that is not there by then is `null`. Check that the script is there,
+and never hold the form because of it:
 
 ```js
-const { token, fingerprintEventId } = await window.Sentinel.collect();
+const evidence = window.Sentinel ? await window.Sentinel.collect() : {};
+await fetch('/signup', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  // evidence = { token, fingerprintEventId, tz }, already the API's names
+  body: JSON.stringify({ email: form.email.value, ...evidence })
+});
 ```
+
+The integration guide has the same flow as a
+[Next.js App Router example](https://maskbreak.com/integrate.md) (client
+component and Route Handler).
 
 ## Examples
 
-### Flask — route signup decisions
-
-```python
-from flask import Flask, request, abort, jsonify
-from sentinel import Sentinel, SentinelError
-
-app = Flask(__name__)
-sentinel = Sentinel()  # reads MASKBREAK_API_KEY from env
-
-@app.route("/signup", methods=["POST"])
-def signup():
-    data = request.get_json(silent=True) or request.form
-    try:
-        result = sentinel.evaluate(token=data.get("monocle"),
-                                   fingerprint_event_id=data.get("sentinel_fp"))
-    except SentinelError as e:
-        # Fail open OR fail closed — your call. Logged either way.
-        app.logger.warning("Sentinel error: %s", e)
-        result = None
-
-    if result and result.is_blocked:
-        abort(403, "Signup blocked")
-
-    if result and result.decision == "review":
-        return jsonify({"needs_verification": True}), 202
-
-    # This example explicitly fails open on SDK errors. Choose an endpoint-
-    # specific fallback; do not reuse this policy for transfers or withdrawals.
-    # ... your normal signup flow
-    return jsonify({"ok": True})
-```
-
 ### Django — middleware for high-value endpoints
 
-```python
-from django.http import JsonResponse
-from sentinel import Sentinel, SentinelError
+The quick start's `maskbreak_check()` works in any framework: give it the
+submitted fields as a mapping.
 
-sentinel = Sentinel()  # reads MASKBREAK_API_KEY from env
+```python
+import json
+
+from django.http import JsonResponse
+
 
 class FraudCheckMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        if request.path.startswith("/api/checkout"):
-            token = request.META.get("HTTP_X_SENTINEL_TOKEN")
-            if not token:
-                return JsonResponse({"error": "verification required"}, status=400)
-            try:
-                result = sentinel.evaluate(token=token,
-                    fingerprint_event_id=request.META.get("HTTP_X_SENTINEL_FINGERPRINT_EVENT_ID"))
-            except SentinelError:
-                return JsonResponse({"error": "verification unavailable"}, status=503)
-            if result.is_blocked:
+        if request.method == "POST" and request.path.startswith("/api/checkout"):
+            if request.content_type == "application/json":
+                try:
+                    data = json.loads(request.body or b"{}")
+                except ValueError:
+                    data = {}
+            else:
+                data = request.POST
+            decision, reasons = maskbreak_check(data if isinstance(data, dict) else {})
+            print("[maskbreak]", MODE, decision or "no answer", reasons)
+            if MODE == "enforce" and decision == "block":
                 return JsonResponse({"error": "blocked"}, status=403)
-            if result.decision == "review":
+            if MODE == "enforce" and decision != "allow":
                 return JsonResponse({"error": "additional verification required"}, status=409)
         return self.get_response(request)
 ```
 
-Runnable versions live in [`examples/`](./examples/).
+More examples, enforce-mode guards for checkout, withdrawal and transfer
+endpoints, live in [`examples/`](./examples/).
 
 ## API
 
