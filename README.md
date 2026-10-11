@@ -130,8 +130,9 @@ def signup():
     ...  # watch mode, or an allow: your existing signup flow runs
 ```
 
-**3. Submit your form once.** Deploy, open the page and submit the form. The
-first check then appears in the dashboard (Integration tab and Events).
+**3. Submit your form once.** Run your app where you can open the page, on
+your computer or on your site, and submit the form once. The first check then
+appears in the dashboard (Integration tab and Events).
 
 This is a handler fragment, not a complete signup implementation. Route `review`
 to your verification/review flow; only `allow` is an approval. Keep API keys on
@@ -172,7 +173,7 @@ class EvaluateResult:
     risk_score: int | None      # 0..100
     ip: str | None
     country: str | None         # ISO-2
-    network: dict               # {vpn, proxy, datacenter, anonymous, tor, residential, service}
+    network: dict               # {vpn, proxy, privacy_relay, datacenter, anonymous, tor, residential, service}
     device: dict                # antidetect / automation / emulator signals
     reasons: list[str]          # machine-readable codes
     email: dict | None          # {disposable: bool} — present when you passed email=
