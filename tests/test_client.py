@@ -138,6 +138,38 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(result.is_suspicious, decision != "allow")
 
 
+class FixtureAndKeyTests(unittest.TestCase):
+    """0.3.0: a public test token never reads as an allow, and the key never reaches an error."""
+
+    def test_fixture_answers_are_blocked_unless_the_client_allows_test_results(self):
+        for marker in ("test", "sample", "sandbox"):
+            raw = {"decision": "allow", marker: True}
+            result = EvaluateResult(decision="allow", test=marker == "test", raw=raw)
+            self.assertTrue(result.is_fixture, marker)
+            self.assertTrue(result.is_blocked, marker)
+        own = EvaluateResult(decision="allow", test=True, raw={"test": True}, allow_test_results=True)
+        self.assertFalse(own.is_blocked)
+        plain = EvaluateResult(decision="allow", raw={})
+        self.assertFalse(plain.is_fixture)
+        self.assertFalse(plain.is_blocked)
+
+    def test_the_key_is_trimmed_and_a_key_with_a_break_inside_is_refused_without_echo(self):
+        self.assertEqual(Sentinel("  sk_live_abc\n").api_key, "sk_live_abc")
+        for bad in ("sk_live_a\nb", "sk_live_a b", "sk_live_a\x00b", "   "):
+            with self.assertRaises(SentinelError) as caught:
+                Sentinel(bad)
+            self.assertNotIn("sk_live_a", str(caught.exception))
+
+    def test_no_error_text_carries_the_key(self):
+        client = Sentinel("sk_live_secret_value_123", "http://127.0.0.1:9")
+        boom = ValueError("Invalid header value b'Bearer sk_live_secret_value_123'")
+        with patch("sentinel.request.OpenerDirector.open", side_effect=boom):
+            with self.assertRaises(SentinelError) as caught:
+                client.lookup("8.8.8.8")
+        self.assertNotIn("sk_live_secret_value_123", str(caught.exception))
+        self.assertIn("[api key]", str(caught.exception))
+
+
 class DjangoGuardTests(unittest.TestCase):
     def test_financial_guard_requires_live_complete_allow_before_view(self):
         http = ModuleType("django.http")

@@ -111,6 +111,8 @@ def maskbreak_check(data):
     try:
         if token:
             result = sentinel.evaluate(token=token, fingerprint_event_id=event_id)
+            if result.is_fixture:  # a test or sample answer: anyone can send a test token
+                return None, "test answer, not a real visitor"
             return result.decision, result.reasons
         if MODE != "enforce":
             raw = report_without_token({"fingerprintEventId": event_id, "tz": tz})
@@ -183,7 +185,9 @@ class EvaluateResult:
     raw: dict                   # full upstream response
 
     is_suspicious: bool         # True for a non-null decision other than 'allow'
-    is_blocked: bool            # True if decision == 'block'
+    is_fixture: bool            # True for a test-token, test-key, sandbox or sample answer
+    is_blocked: bool            # True if decision == 'block', or (since 0.3.0) for any
+                                # fixture answer unless Sentinel(allow_test_results=True)
 ```
 
 Try the live sample (same shape, no key needed):

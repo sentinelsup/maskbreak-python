@@ -21,7 +21,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.2.10"
+__version__ = "0.3.0"
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -61,6 +61,8 @@ class EvaluateResult:
     engine_decision: Optional[str] = None
     test: bool = False
     raw: Dict[str, Any] = field(default_factory=dict)
+    # Set by the client: Sentinel(allow_test_results=True) for your own test runs.
+    allow_test_results: bool = field(default=False, repr=False)
 
     @property
     def is_suspicious(self) -> bool:
@@ -68,7 +70,21 @@ class EvaluateResult:
         return self.decision is not None and self.decision != "allow"
 
     @property
+    def is_fixture(self) -> bool:
+        """True for a test-token, test-key, sandbox or sample answer.
+
+        Such an answer describes a pretend visitor, never this one: the fixed
+        test tokens are public, so a visitor can type one into your form field.
+        Never let it authorize a real action.
+        """
+        return bool(self.test or self.raw.get("sample") or self.raw.get("sandbox"))
+
+    @property
     def is_blocked(self) -> bool:
+        """True for a block, and (since 0.3.0) for any fixture answer unless the
+        client was created with allow_test_results=True."""
+        if self.is_fixture and not self.allow_test_results:
+            return True
         return self.decision == "block"
 
 
@@ -80,6 +96,7 @@ class Sentinel:
         api_key: Optional[str] = None,
         endpoint: str = DEFAULT_ENDPOINT,
         timeout: float = DEFAULT_TIMEOUT,
+        allow_test_results: bool = False,
     ) -> None:
         # MASKBREAK_API_KEY is the name every doc surface uses. SENTINEL_KEY
         # and SENTINEL_API_KEY are older names, still read so existing installs
@@ -97,9 +114,21 @@ class Sentinel:
                 "(the older SENTINEL_KEY still works). "
                 "Get one free at https://maskbreak.com/signup"
             )
+        # Trimmed (a key read from a file or a secret ends in a line break more
+        # often than not), and never echoed: a line break left in made
+        # http.client raise an error quoting the whole Authorization header,
+        # and the README's handlers log the error text (0.3.0).
+        api_key = api_key.strip()
+        if not api_key or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in api_key):
+            raise SentinelError(
+                "Sentinel: the API key is empty or contains a space, a line break "
+                "or another control character. Copy it again from the dashboard "
+                "(Settings, API keys)."
+            )
         self.api_key = api_key
         self.endpoint = endpoint.rstrip("/")
         self.timeout = timeout
+        self.allow_test_results = allow_test_results is True
 
     def _request(
         self,
@@ -143,9 +172,14 @@ class Sentinel:
                 body=err_body,
             ) from None
         except error.URLError as e:
-            raise SentinelError(f"Sentinel: network error — {e.reason}") from None
+            raise SentinelError(f"Sentinel: network error — {self._scrub(e.reason)}") from None
         except Exception as e:
-            raise SentinelError(f"Sentinel: unexpected error — {e}") from None
+            raise SentinelError(f"Sentinel: unexpected error — {self._scrub(e)}") from None
+
+    def _scrub(self, value: Any) -> str:
+        """The text of an error with the API key taken out."""
+        text = str(value)
+        return text.replace(self.api_key, "[api key]") if self.api_key else text
 
     def evaluate(
         self,
@@ -202,6 +236,7 @@ class Sentinel:
             engine_decision=data.get("engine_decision"),
             test=bool(data.get("test")),
             raw=data,
+            allow_test_results=self.allow_test_results,
         )
 
     def lookup(self, ip: str) -> Dict[str, Any]:

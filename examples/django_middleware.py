@@ -42,7 +42,8 @@ class SentinelMiddleware:
             # Unknown state must not authorize checkout, withdrawal or transfer.
             return JsonResponse({"error": "verification unavailable"}, status=503)
 
-        if result.is_blocked:
+        # A test or sample answer is not a real verdict: it gets the 409 below.
+        if result.decision == "block" and not result.is_fixture:
             return JsonResponse(
                 {"error": "blocked", "risk_score": result.risk_score, "reasons": result.reasons},
                 status=403,
