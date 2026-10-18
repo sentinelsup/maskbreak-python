@@ -21,7 +21,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -63,6 +63,9 @@ class EvaluateResult:
     raw: Dict[str, Any] = field(default_factory=dict)
     # Set by the client: Sentinel(allow_test_results=True) for your own test runs.
     allow_test_results: bool = field(default=False, repr=False)
+    # The account network (since 0.3.1): present when account_id was sent with a
+    # live key. Last, so positional construction keeps working.
+    account: Optional[Dict[str, Any]] = None
 
     @property
     def is_suspicious(self) -> bool:
@@ -193,8 +196,10 @@ class Sentinel:
         Args:
             token: Sentinel client-side token from the frontend SDK.
             fingerprint_event_id: Optional device event id for device signals.
-            account_id: Optional account/user id — enables multi-accounting
-                detection (device.linked_accounts / device.multi_account).
+            account_id: Optional account/user id, from your server-side session
+                (never a form field) — enables multi-accounting detection
+                (device.linked_accounts / device.multi_account) and, with a live
+                key, the ``account`` object (account network).
             email: Optional signup email. Adds ``email.disposable`` to the raw
                 response (burner domains escalate allow to review). Checked
                 transiently — never stored or logged.
@@ -237,6 +242,7 @@ class Sentinel:
             test=bool(data.get("test")),
             raw=data,
             allow_test_results=self.allow_test_results,
+            account=data.get("account"),
         )
 
     def lookup(self, ip: str) -> Dict[str, Any]:

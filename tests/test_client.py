@@ -63,6 +63,14 @@ class ClientTests(unittest.TestCase):
         self.assertFalse(result.is_blocked)
         self.assertTrue(result.is_suspicious)
         self.assertTrue(result.raw["future_field"])
+        self.assertIsNone(result.account, "no account object unless the API sends one")
+
+    def test_the_account_network_answer_is_a_field(self):
+        self.server.reply = (200, b'{"decision":"review","reasons":["device_many_accounts"],'
+                                  b'"account":{"seen_before":true,"device_accounts_24h":3}}', {})
+        result = self.client.evaluate("fixture", "device-event", "account")
+        self.assertEqual(result.account, {"seen_before": True, "device_accounts_24h": 3})
+        self.assertEqual(result.reasons, ["device_many_accounts"])
 
     def test_lookup_trims_and_encodes_ipv6_without_body(self):
         self.server.reply = (200, b'{"verdict":"allow","known":false}', {})

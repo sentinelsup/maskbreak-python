@@ -179,6 +179,8 @@ class EvaluateResult:
     device: dict                # antidetect / automation / emulator signals
     reasons: list[str]          # machine-readable codes
     email: dict | None          # {disposable: bool} — present when you passed email=
+    account: dict | None        # the account network (since 0.3.1): present when you
+                                # passed account_id= with a live key
     decision_source: str | None # 'rules' | 'exception' when your policy matched
     engine_decision: str | None # engine's own verdict when policy changed the decision
     test: bool                  # True for test-token / test-key calls
@@ -290,7 +292,7 @@ endpoints, live in [`examples/`](./examples/).
 Returns `EvaluateResult`. Raises `SentinelError` when `token` is missing or empty, and on network/API failure.
 
 - `fingerprint_event_id` — adds the `device` signal block (antidetect, automation, emulator, …).
-- `account_id` — your own user id for this session; enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`).
+- `account_id` — your own user id for this session, from your server-side session (never a form field); enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`) and, with a live key, the `account` object (the account network, since 18 October 2026): devices per account, your accounts per device and per address in 24 hours, `new_device`, and the accounts it shares a device or an address with. `device_many_accounts` (3+ of your accounts on one device within 24 hours) raises an allow to review; `account_new_device`, `account_many_devices` and `ip_many_accounts` inform only. Maskbreak keeps the id as a keyed hash and, encrypted, for your console; nothing crosses customers.
 - `email` — adds `email.disposable` to the raw response; burner domains escalate `allow` to `review`.
 
 This synchronous SDK forwards only these named inputs. It does not expose a
