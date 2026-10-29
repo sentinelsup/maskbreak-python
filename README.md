@@ -186,7 +186,7 @@ result = sentinel.evaluate(token=tok, email=data["email"])
 if result.raw.get("email", {}).get("disposable"):
     ...  # burner domain — decision is escalated allow → review
 
-info = sentinel.lookup("185.220.101.34")  # GET /v1/lookup/{ip} — same key and hourly limit; its own monthly allowance (10x your checks)
+info = sentinel.lookup("185.220.101.34")  # GET /v1/lookup/{ip} — same key; its own monthly allowance (10x your checks)
 print(info["verdict"])                   # 'allow' | 'review' | 'block'
 print(info["signals"])                   # {'vpn': ..., 'proxied': ..., 'tor': ..., 'dch': ..., 'anon': ...}
 ```
@@ -602,7 +602,7 @@ failure.
 
 ### `sentinel.lookup(ip)`
 
-Returns the raw response dict for any public IPv4/IPv6 address (wraps `GET /v1/lookup/{ip}`): `verdict` (`allow`/`review`/`block`), `risk_score` (0–100), `known`, `signals` (`{vpn, proxied, tor, dch, anon}` or `None`), `network` (`{asn, org, country, city}`), `latency_ms`. Shares the hourly quota with `evaluate()` (one per account for the live keys; the test key has its own) and has its own monthly allowance. `known: False` means our feeds hold no data — it is **not** a clean guarantee.
+Returns the raw response dict for any public IPv4/IPv6 address (wraps `GET /v1/lookup/{ip}`): `verdict` (`allow`/`review`/`block`), `risk_score` (0–100), `known`, `signals` (`{vpn, proxied, tor, dch, anon}` or `None`), `network` (`{asn, org, country, city}`), `latency_ms`. Has its own monthly allowance, 10× the plan's checks. `known: False` means our feeds hold no data — it is **not** a clean guarantee.
 
 Production bare-IP lookup checks cloud ranges and Tor exits, not live-visit
 VPN/proxy evidence. Legacy `vpn`/`proxied` keys in the shape do not imply those
@@ -686,7 +686,7 @@ your outage policy meanwhile.
 
 ## Rate limits
 
-Visitor checks (`evaluate()`) are counted per calendar month in UTC, with an hourly cap: **Free — 10,000 a month, up to 1,000 an hour, no credit card**; paid plans from €29 a month ([pricing](https://maskbreak.com/pricing)). IP lookups (`lookup()`) have their own monthly allowance, 10× the plan's checks (100,000 on Free). A used-up month answers `429` with `code: "monthly_quota_exceeded"` and `Retry-After` until the 1st; there are no overage charges. The quick start's `maskbreak_check()` answers `"unchecked"` then, and lets the action through and logs it, in enforce mode too, so running out never takes your form offline.
+Visitor checks (`evaluate()`) are counted per calendar month in UTC, with no hourly cap: **Free — 10,000 a month, no credit card**; paid plans from €29 a month ([pricing](https://maskbreak.com/pricing)). IP lookups (`lookup()`) have their own monthly allowance, 10× the plan's checks (100,000 on Free). A used-up month answers `429` with `code: "monthly_quota_exceeded"` and `Retry-After` until the 1st; there are no overage charges. The quick start's `maskbreak_check()` answers `"unchecked"` then, and lets the action through and logs it, in enforce mode too, so running out never takes your form offline.
 
 ## What Maskbreak detects
 
