@@ -23,7 +23,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 # The values ``event`` takes (login protection, since 23 October 2026). The API
 # reads the name case-insensitively and ignores any other value without a word,
@@ -508,9 +508,9 @@ class Sentinel:
         """Look up an arbitrary public IP address — no browser token needed.
 
         Wraps ``GET /v1/lookup/{ip}``. Useful for batch scoring, log
-        enrichment, and server-side screening. Shares the hourly quota
-        with :meth:`evaluate` (one per account for the live keys; the test key
-        has its own) and has its own monthly allowance.
+        enrichment, and server-side screening. Has its own monthly
+        allowance, 10x the plan's checks (no plan has an hourly limit since
+        2026-10-29).
 
         Args:
             ip: Public IPv4 or IPv6 address, e.g. ``"185.220.101.34"``.

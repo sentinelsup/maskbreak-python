@@ -426,10 +426,10 @@ class MissingBrowserPartWarningTests(unittest.TestCase):
 
 
 class VersionTests(unittest.TestCase):
-    def test_the_package_and_the_module_agree_on_0_4_0(self):
+    def test_the_package_and_the_module_agree_on_0_4_1(self):
         pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-        self.assertEqual(re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1), "0.4.0")
-        self.assertEqual(sentinel_module.__version__, "0.4.0")
+        self.assertEqual(re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1), "0.4.1")
+        self.assertEqual(sentinel_module.__version__, "0.4.1")
 
 
 if __name__ == "__main__":
