@@ -23,7 +23,7 @@ from urllib import error, parse, request
 
 DEFAULT_ENDPOINT = "https://maskbreak.com"
 DEFAULT_TIMEOUT = 5.0
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 # The values ``event`` takes (login protection, since 23 October 2026). The API
 # reads the name case-insensitively and ignores any other value without a word,
@@ -93,6 +93,25 @@ def _given(value: Any) -> bool:
     return value is not None and not (isinstance(value, str) and value == "")
 
 
+# The characters JavaScript's String.prototype.trim() removes. POST
+# /v1/evaluate reads a token made only of them as no token at all and answers
+# it with the degraded allow it gives a missing one, so such a token is missing
+# here too (0.4.2): the visitor chooses that field's value, and a space must not
+# turn the refusal of a missing token into an allow. str.strip() alone is a
+# different set (it misses U+FEFF, and also strips U+001C-U+001F and U+0085,
+# which the API reads as a token).
+_JS_WHITESPACE = (
+    "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
+def _blank_token(value: Any) -> bool:
+    """True for a token the API reads as no token: a string of whitespace only."""
+    return isinstance(value, str) and value.strip(_JS_WHITESPACE) == ""
+
+
 class _NoRedirect(request.HTTPRedirectHandler):
     """Do not forward API credentials or replay calls at a redirect target."""
 
@@ -131,7 +150,8 @@ class EvaluateResult:
     engine_decision: Optional[str] = None
     test: bool = False
     raw: Dict[str, Any] = field(default_factory=dict)
-    # Set by the client: Sentinel(allow_test_results=True) for your own test runs.
+    # Set by the client: Sentinel(allow_test_results=True) for your own test runs
+    # lets is_blocked and is_suspicious follow the decision of a fixture answer.
     allow_test_results: bool = field(default=False, repr=False)
     # The account network (since 0.3.1): present when account_id was sent with a
     # live key. Last, so positional construction keeps working.
@@ -163,7 +183,12 @@ class EvaluateResult:
 
     @property
     def is_suspicious(self) -> bool:
-        """True if the decision is anything other than 'allow'."""
+        """True if the decision is anything other than 'allow', and (since 0.4.2)
+        for any fixture answer unless the client was created with
+        allow_test_results=True, as in is_blocked: a visitor can type a public
+        test token such as test_clean into your form field and get an allow back."""
+        if self.is_fixture and not self.allow_test_results:
+            return True
         return self.decision is not None and self.decision != "allow"
 
     @property
@@ -174,7 +199,7 @@ class EvaluateResult:
         test tokens are public, so a visitor can type one into your form field.
         Never let it authorize a real action.
         """
-        return bool(self.test or self.sample or self.sandbox
+        return bool(self.test or self.sample or self.sandbox or self.raw.get("test")
                     or self.raw.get("sample") or self.raw.get("sandbox"))
 
     @property
@@ -210,13 +235,15 @@ class SetupStatus(TypedDict):
     verified), test_mode (a test token, or the test key without both parts),
     test_complete (the test key with both parts: swap in the live key),
     ip_restricted (refused by your allowed server addresses), rate_limited
-    (refused by the hourly or monthly limit) or request_failed (the call
-    failed, for example an invalid token).
+    (refused by an hourly limit; no account has one since 2026-10-29),
+    monthly_quota_exceeded (this month's checks are used up, since 2026-10-27)
+    or request_failed (the call failed, for example an invalid token).
     """
 
     status: Literal["waiting", "complete", "missing_network", "network_unavailable",
                     "missing_device", "device_unavailable", "test_mode", "test_complete",
-                    "ip_restricted", "rate_limited", "request_failed"]
+                    "ip_restricted", "rate_limited", "monthly_quota_exceeded",
+                    "request_failed"]
     complete: bool              # at least one complete live-key check has arrived
     message: str                # what the latest check showed, in words
     next_step: Optional[str]    # what to do next, or None
@@ -355,7 +382,8 @@ class Sentinel:
         Args:
             token: Sentinel client-side token from the frontend SDK. Required,
                 except for the account events password_change, verification,
-                logout and account_change (0.4.0).
+                logout and account_change (0.4.0). A token that is only
+                whitespace counts as missing, as the API reads it (0.4.2).
             fingerprint_event_id: Optional device event id for device signals.
                 Without it the check has no browser part, and the SDK warns once
                 (see ``warn_missing_browser_part``).
@@ -396,11 +424,11 @@ class Sentinel:
             EvaluateResult with decision, risk_score, network, device, and reasons.
 
         Raises:
-            SentinelError: on a missing or empty token (outside the four account
-                events), a value the API would ignore or misread (an unknown
-                event, a non-bool login_succeeded, ...; nothing is sent then),
-                network failure, timeout, a non-2xx response, or a response
-                without a valid decision.
+            SentinelError: on a missing, empty or whitespace-only token
+                (outside the four account events), a value the API would ignore
+                or misread (an unknown event, a non-bool login_succeeded, ...;
+                nothing is sent then), network failure, timeout, a non-2xx
+                response, or a response without a valid decision.
         """
         choices = {"event": event, "reason": reason, "verification_type": verification_type,
                    "verified_event": verified_event}
@@ -417,6 +445,8 @@ class Sentinel:
             picked[name] = norm
 
         account_event = picked.get("event") in _TOKENLESS_EVENTS
+        if _blank_token(token):
+            token = None  # the API reads it as no token; a real token is sent unchanged
         if not _given(token) and not account_event:
             raise SentinelError(
                 "Sentinel.evaluate: token (client-side Sentinel token) is required "

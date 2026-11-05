@@ -164,6 +164,29 @@ class FixtureAndKeyTests(unittest.TestCase):
         self.assertFalse(plain.is_fixture)
         self.assertFalse(plain.is_blocked)
 
+    def test_fixture_answers_are_suspicious_unless_the_client_allows_test_results(self):
+        # 0.4.2: the visitor chooses the token, and test_clean answers allow with
+        # test: True on a live key, so is_suspicious must not read it as clean.
+        for marker in ("test", "sample", "sandbox"):
+            for decision in ("allow", "review", "block"):
+                raw = {"decision": decision, marker: True}
+                result = EvaluateResult(decision=decision, test=marker == "test",
+                                        sample=marker == "sample", sandbox=marker == "sandbox", raw=raw)
+                self.assertTrue(result.is_suspicious, (marker, decision))
+                # Built the way older code built it: the marker only in raw.
+                self.assertTrue(EvaluateResult(decision=decision, raw=raw).is_suspicious, (marker, decision))
+                own = EvaluateResult(decision=decision, test=marker == "test", raw=raw, allow_test_results=True)
+                self.assertEqual(own.is_suspicious, decision != "allow", (marker, decision))
+        forged = {"decision": "allow", "test": True, "isSuspicious": False, "risk_score": 0, "reasons": []}
+        for allow_test_results, expected in ((False, True), (True, False)):
+            client = Sentinel("sk_live_fixture", "http://127.0.0.1:9",
+                              allow_test_results=allow_test_results, warn_missing_browser_part=False)
+            with patch.object(Sentinel, "_request", return_value=dict(forged)):
+                result = client.evaluate(token="test_clean")
+            self.assertEqual(result.is_suspicious, expected, allow_test_results)
+            # The fields are the API's, unchanged.
+            self.assertEqual((result.decision, result.test, result.raw["isSuspicious"]), ("allow", True, False))
+
     def test_the_key_is_trimmed_and_a_key_with_a_break_inside_is_refused_without_echo(self):
         self.assertEqual(Sentinel("  sk_live_abc\n").api_key, "sk_live_abc")
         for bad in ("sk_live_a\nb", "sk_live_a b", "sk_live_a\x00b", "   "):
@@ -298,6 +321,30 @@ class LoginProtectionFieldTests(unittest.TestCase):
                     self.client.evaluate(**kwargs)
         self.assertEqual(self.server.calls, [])
 
+    def test_a_token_that_is_only_whitespace_counts_as_missing(self):
+        """0.4.2: the API reads a token that is blank after JavaScript's trim()
+        as no token and answers a degraded allow; a visitor who sent a space
+        turned the refusal of a missing token into that allow."""
+        self.server.reply = (200, b'{"decision":"allow","degraded":true}', {})
+        blanks = (" ", "\t\n", "\u00a0", "\ufeff", "\u2028", "\u3000",
+                  " \u00a0\t\ufeff\r\n\v\f\u1680\u2000\u200a\u202f\u205f ")
+        for token in blanks:
+            with self.subTest(token=token):
+                with self.assertRaisesRegex(SentinelError, r"token \(client-side Sentinel token\) is required"):
+                    self.client.evaluate(token, "evt")
+                with self.assertRaisesRegex(SentinelError, r"token \(client-side Sentinel token\) is required"):
+                    self.client.evaluate(token, event="login", account_id="u")
+        self.assertEqual(self.server.calls, [], "nothing reached the API")
+        # An account event may go without the token: a blank one is left out, as none.
+        self.client.evaluate(" \u00a0", event="logout", account_id="u_42")
+        self.assertEqual(self.body(), {"accountId": "u_42", "event": "logout"})
+        # A token the API reads as a token goes as given: padded, or a character
+        # JavaScript's trim() keeps (str.strip() would drop U+0085 and U+001C).
+        for token in (" tok ", "\u200b", "\u180e", "\u0085", "\u001c"):
+            with self.subTest(token=token):
+                self.client.evaluate(token, "evt")
+                self.assertEqual(self.body()["token"], token)
+
     def test_the_new_answer_fields_land_on_the_result(self):
         answer = {"decision": "review", "reasons": ["account_takeover_risk", "phone_high_risk"], "degraded": True,
                   "account_takeover": {"checked": True, "score": 91, "risk": "high", "signals": ["new_location"]},
@@ -426,10 +473,10 @@ class MissingBrowserPartWarningTests(unittest.TestCase):
 
 
 class VersionTests(unittest.TestCase):
-    def test_the_package_and_the_module_agree_on_0_4_1(self):
+    def test_the_package_and_the_module_agree_on_0_4_2(self):
         pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-        self.assertEqual(re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1), "0.4.1")
-        self.assertEqual(sentinel_module.__version__, "0.4.1")
+        self.assertEqual(re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1), "0.4.2")
+        self.assertEqual(sentinel_module.__version__, "0.4.2")
 
 
 if __name__ == "__main__":

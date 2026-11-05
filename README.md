@@ -114,6 +114,8 @@ def maskbreak_check(data):
             result = sentinel.evaluate(token=token, fingerprint_event_id=event_id, tz=tz)
             if result.is_fixture:  # a test or sample answer: anyone can send a test token
                 return None, "test answer, not a real visitor"
+            if result.degraded:  # the network check could not run for it: no verdict either
+                return None, "degraded answer, no network check"
             return result.decision, result.reasons
         if MODE != "enforce":
             raw = report_without_token({"fingerprintEventId": event_id, "tz": tz})
@@ -154,6 +156,26 @@ Since v0.2.5, `Sentinel()` without a key reads `MASKBREAK_API_KEY`; the older
 `SENTINEL_KEY` and `SENTINEL_API_KEY` names are still read as fallbacks.
 
 ## What's new
+
+### 0.4.2
+
+- A `token` that is only whitespace (a space, a tab, a line break, U+00A0,
+  U+FEFF) counts as missing: `evaluate()` raises `SentinelError`, as for no
+  token, and nothing is sent. The API reads such a token as no token and
+  answers a degraded allow, so a visitor who typed a space into the token field
+  turned the refusal of a missing token into an allow. A real token is sent
+  unchanged.
+- The quick start's `maskbreak_check()` and the login example hold a degraded
+  answer (`result.degraded`) in enforce mode, as
+  [integrate.md](https://maskbreak.com/integrate.md) does: it had no network
+  check.
+- `result.is_suspicious` is `True` for a test, sandbox or sample answer, as
+  `is_blocked` has been since 0.3.0. A visitor could type a public test token
+  such as `test_clean` into your form field and get an allow, and
+  `is_suspicious` read that answer as clean. A client made with
+  `Sentinel(allow_test_results=True)` lets the decision decide, for your own
+  test runs. `is_fixture` also reads `test` from `raw`, for an `EvaluateResult`
+  you build yourself.
 
 ### 0.4.0 (2026-10-27)
 
@@ -231,7 +253,8 @@ class EvaluateResult:
     exception_matched: list | None # pins that matched
     evaluated_in_ms: int | None
 
-    is_suspicious: bool         # True for a non-null decision other than 'allow'
+    is_suspicious: bool         # True for a non-null decision other than 'allow', or (since
+                                # 0.4.2) for any fixture answer unless Sentinel(allow_test_results=True)
     is_fixture: bool            # True for a test-token, test-key, sandbox or sample answer
     is_blocked: bool            # True if decision == 'block', or (since 0.3.0) for any
                                 # fixture answer unless Sentinel(allow_test_results=True)
@@ -386,8 +409,8 @@ def login():
     if MODE == "enforce" and not month_used_up:
         if result is not None and result.decision == "block":
             abort(403)
-        # Review, no answer or a test answer: a second factor, not a refusal.
-        if result is None or result.decision != "allow" or result.is_fixture:
+        # Review, no answer, a degraded or a test answer: a second factor, not a refusal.
+        if result is None or result.decision != "allow" or result.degraded or result.is_fixture:
             return send_second_factor(user)
     return sign_in(user)  # your existing session code
 ```
@@ -410,6 +433,13 @@ def login():
   `account_id`. Its score learns from the logins of every Maskbreak customer
   who uses login protection; say so in your own privacy notice. A login
   counts as a normal check.
+- `result.account` (the account network) reads a login whose
+  `login_succeeded` is not `True` as an attempt, since 5 November 2026: it
+  counts in `device_accounts_24h` and `ip_accounts_24h`, never in that
+  account's own devices, addresses or connected accounts. Send
+  `login_succeeded` with every login check, and at sign-in send `account_id`
+  only on a check made after the credential was accepted or on this login
+  check.
 
 ### A signup with email and phone
 
@@ -506,7 +536,9 @@ sent: an `event` other than `login`, `signup`, `password_change`,
 outside its list, a `login_succeeded` or `succeeded` that is not `True` or
 `False`, a `tz`, `phone`, `user_agent` or `ip` that is not a string, and a
 `session_id` that is not a string or an int or is longer than 256 characters.
-An argument that is `None` or `""` is left out of the request.
+An argument that is `None` or `""` is left out of the request. A `token` that
+is only whitespace (a space, a tab, a line break, U+00A0, U+FEFF) counts as
+missing, as the API reads it (since 0.4.2).
 
 ### The missing-browser-part warning
 
@@ -540,7 +572,7 @@ if setup["next_step"]:
 
 | Key | What it says |
 |---|---|
-| `status` | What the latest check showed: `waiting` (no check in the last 7 days, and none complete before), `complete` (both parts, live key), `missing_network` (no network token), `network_unavailable` (a token that could not be read), `missing_device` (no browser event id), `device_unavailable` (a browser event that could not be verified), `test_mode` (a test token, or the test key without both parts), `test_complete` (the test key with both parts: swap in the live key), `ip_restricted`, `rate_limited` or `request_failed` |
+| `status` | What the latest check showed: `waiting` (no check in the last 7 days, and none complete before), `complete` (both parts, live key), `missing_network` (no network token), `network_unavailable` (a token that could not be read), `missing_device` (no browser event id), `device_unavailable` (a browser event that could not be verified), `test_mode` (a test token, or the test key without both parts), `test_complete` (the test key with both parts: swap in the live key), `ip_restricted`, `rate_limited` (an hourly limit; no account has one since 29 October 2026), `monthly_quota_exceeded` (this month's checks are used up: `next_step` links to the plan that raises the allowance) or `request_failed` |
 | `complete` | At least one complete live-key check has arrived |
 | `message` / `next_step` | What the latest check showed, and what to do next (`None` when nothing is left) |
 | `last_check_at`, `complete_checks`, `last_complete_at` | When the latest check arrived, how many complete ones did, and when the latest of those did |
@@ -560,12 +592,12 @@ sends it, a dict (typed as `sentinel.SetupStatus` for type checkers).
 | `api_key` | `$MASKBREAK_API_KEY` (falls back to `$SENTINEL_KEY`, then `$SENTINEL_API_KEY`) | Your key starting with `sk_live_` |
 | `endpoint` | `https://maskbreak.com` | Override base URL (for testing) |
 | `timeout` | `5.0` | Per-request timeout in seconds |
-| `allow_test_results` | `False` | Only for your own test runs: `is_blocked` treats test, sandbox and sample answers as a normal decision |
+| `allow_test_results` | `False` | Only for your own test runs: `is_blocked` and `is_suspicious` treat test, sandbox and sample answers as a normal decision |
 | `warn_missing_browser_part` | `True` | `False` turns off the one-time `MissingBrowserPartWarning` (since 0.4.0) |
 
 ### `sentinel.evaluate(token=None, fingerprint_event_id=None, account_id=None, email=None, *, ...)`
 
-Returns `EvaluateResult`. Raises `SentinelError` when `token` is missing or empty (except for the four account events below), for a value the API would ignore or misread ([Refused before sending](#refused-before-sending)), and on network/API failure.
+Returns `EvaluateResult`. Raises `SentinelError` when `token` is missing, empty or only whitespace (except for the four account events below), for a value the API would ignore or misread ([Refused before sending](#refused-before-sending)), and on network/API failure.
 
 The keyword-only arguments (since 0.4.0), each sent under the API's own name and only when given:
 
@@ -583,7 +615,7 @@ The keyword-only arguments (since 0.4.0), each sent under the API's own name and
 | `verified_event` | `verifiedEvent` | With `verification`: `login`, `signup`, `password_change` or `account_change` |
 
 - `fingerprint_event_id` — adds the `device` signal block (antidetect, automation, emulator, …).
-- `account_id` — your own user id for this session, from your server-side session (never a form field); enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`) and, with a live key, the `account` object (the account network, since 18 October 2026): devices per account, your accounts per device and per address in 24 hours, `new_device`, and the accounts it shares a device or an address with. `device_many_accounts` (3+ of your accounts on one device within 24 hours) raises an allow to review; `account_new_device`, `account_many_devices` and `ip_many_accounts` inform only. Maskbreak keeps the id as a keyed hash and, encrypted, for your console; nothing crosses customers.
+- `account_id` — your own user id for this session, from your server-side session (never a form field); enables multi-accounting detection (`device.linked_accounts` / `device.multi_account`) and, with a live key, the `account` object (the account network, since 18 October 2026): devices per account, your accounts per device and per address in 24 hours, `new_device`, and the accounts it shares a device or an address with. `device_many_accounts` (3+ of your accounts on one device within 24 hours) raises an allow to review; `account_new_device`, `account_many_devices` and `ip_many_accounts` inform only. Maskbreak keeps the id as a keyed hash and, encrypted, for your console; nothing crosses customers. At sign-in, send it once the credential was accepted, or with `event="login"` and `login_succeeded`: since 5 November 2026 a check with `event` `login`, `verification` or `password_change` whose `login_succeeded` (or `succeeded`) is not `True` counts as a sign-in attempt, which adds nothing to the account's own devices or addresses.
 - `email` — adds `email.disposable` to the raw response; burner domains escalate `allow` to `review`. With email and phone intelligence on (the default for accounts created from 23 October 2026), `email` also carries the provider's `checked`, `score`, `risk` and `signals`, and each address scored uses one of the plan's daily email-and-phone checks.
 
 This synchronous SDK forwards only these named inputs (the GPU and browser
@@ -659,7 +691,7 @@ matrix is not a claim that every interpreter was tested locally; inspect its run
 
 ## Errors
 
-A missing or empty `token` (outside the four account events), an input the API would ignore or misread, transport/API failures and unusable success responses raise `SentinelError`.
+A missing, empty or whitespace-only `token` (outside the four account events), an input the API would ignore or misread, transport/API failures and unusable success responses raise `SentinelError`.
 The exception carries `.status` (HTTP code) and `.body` (parsed error body) when
 available. Redirects are rejected to avoid forwarding credentials. Configure the
 final API base URL; the client does not retry automatically.
